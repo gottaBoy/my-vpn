@@ -42,39 +42,73 @@
 ```
 my-vpn/
 ├── Makefile                         # VPN 全生命周期管理
+├── docs/
+│   └── production.md                # 生产部署指南（EC2 + RDS）
 └── netbird/
-    ├── docker-compose.yaml          # NetBird 自托管（Management+Signal+Coturn+Dashboard+Zitadel+PG）
+    ├── docker-compose.yaml          # NetBird 基础服务定义
+    ├── docker-compose.test.yaml     # macOS 测试覆盖（Caddy 反向代理，禁用 Coturn）
+    ├── docker-compose.prod.yaml     # 生产覆盖（RDS、资源限制、健康检查）
+    ├── Caddyfile                    # Caddy 反向代理路由规则（测试用）
     ├── zitadel-config.yaml          # Zitadel IdP 最小配置
     ├── turnserver.conf              # Coturn TURN/STUN 配置
-    ├── cert-export.sh               # 从 K8s Secret 导出 TLS 证书到 ./certs/
+    ├── cert-export.sh               # 首次证书导出（从 K8s Secret）
+    ├── cert-renew-cron.sh           # 证书自动轮换（cron 脚本，生产用）
+    ├── netbird.service              # systemd 单元（生产用）
     ├── .env.example                 # 环境变量模板
     └── certs/                       # (gitignored) 证书导出目录
 ```
+    └── certs/                       # (gitignored) 证书导出目录
+```
 
-## 快速开始（本地 kind 测试）
+## 快速开始（macOS 最小化测试）
 
 ```bash
-# 1. 确保 PKI 平台已就绪
+# 0. 一次性准备：域名解析
+sudo sh -c 'echo "127.0.0.1 netbird.local" >> /etc/hosts'
+
+# 1. 确保 my-infra PKI 平台已就绪
 cd ../my-infra
 make kind-up && make bootstrap && make test
-# → netbird-tls-secret 已由 cert-manager 签发
+# → netbird-tls-secret 已由 cert-manager 签发（含 netbird.local SAN）
 
-# 2. 导出证书 + 启动 NetBird
+# 2. 运行 NetBird 全栈测试
 cd ../my-vpn
-cp netbird/.env.example netbird/.env
-# 编辑 netbird/.env 按需修改（本地测试保持默认即可）
+cp netbird/.env.example netbird/.env   # 默认即 netbird.local
+make test
+# → 自动完成: 证书导出 → 容器启动 → API 健康检查 → Dashboard 验证
 
-make netbird-up
-# → 证书自动从 K8s 导出 → docker compose 启动所有服务
+# 3. 访问 Dashboard
+open https://netbird.local
+# 首次登录: netbird-admin / NetBirdAdmin123!
 
-# 3. 验证
-make netbird-status          # API 健康检查
-make cert-verify             # 查看证书信息
-docker compose -f netbird/docker-compose.yaml ps   # 所有容器状态
+# 4. 查看状态
+make cert-verify           # 证书详情（SANs、有效期）
+make netbird-logs-test     # 实时日志
+make netbird-down-test     # 停止
+```
 
-# 4. 访问 Dashboard
-open http://localhost
-# 首次登录用 Zitadel 账号: netbird-admin / NetBirdAdmin123!
+### 测试架构（macOS）
+
+```
+                    https://netbird.local:443
+                           │
+                    ┌──────┴──────┐
+                    │    Caddy    │  ← TLS 终止（cert-manager 证书）
+                    │  反向代理   │
+                    └──────┬──────┘
+           ┌───────────────┼───────────────┐
+           ▼               ▼               ▼
+    ┌────────────┐  ┌────────────┐  ┌──────────────┐
+    │ Management │  │  Zitadel   │  │  Dashboard   │
+    │   :443     │  │   :8080    │  │    :80       │
+    └────────────┘  └────────────┘  └──────────────┘
+           │
+    ┌──────┴──────┐
+    ▼             ▼
+  Signal     PostgreSQL
+  :10000       :5432
+
+  Coturn: 禁用（macOS 无 host networking，不影响 API 测试）
 ```
 
 ## 证书集成说明

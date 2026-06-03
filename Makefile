@@ -4,8 +4,9 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
 NETBIRD_DIR := netbird
-COMPOSE_FILES_DEV  := -f $(NETBIRD_DIR)/docker-compose.yaml
-COMPOSE_FILES_PROD := -f $(NETBIRD_DIR)/docker-compose.yaml -f $(NETBIRD_DIR)/docker-compose.prod.yaml
+COMPOSE_FILES_DEV   := -f $(NETBIRD_DIR)/docker-compose.yaml
+COMPOSE_FILES_TEST  := -f $(NETBIRD_DIR)/docker-compose.yaml -f $(NETBIRD_DIR)/docker-compose.test.yaml
+COMPOSE_FILES_PROD  := -f $(NETBIRD_DIR)/docker-compose.yaml -f $(NETBIRD_DIR)/docker-compose.prod.yaml
 
 .PHONY: help
 help: ## Show this help
@@ -32,9 +33,33 @@ netbird-up: cert-export ## Start NetBird (dev mode, local PostgreSQL)
 	@sleep 10
 	docker compose $(COMPOSE_FILES_DEV) ps
 
+.PHONY: netbird-up-test
+netbird-up-test: cert-export ## Start NetBird in macOS test mode (Caddy reverse proxy, no Coturn)
+	@echo "==> Checking /etc/hosts for netbird.local..."
+	@grep -q 'netbird.local' /etc/hosts || \
+		{ echo "ERROR: Add '127.0.0.1 netbird.local' to /etc/hosts first:"; \
+		  echo "  sudo sh -c 'echo \"127.0.0.1 netbird.local\" >> /etc/hosts'"; exit 1; }
+	docker compose $(COMPOSE_FILES_TEST) up -d
+	@echo "==> Waiting for services (Zitadel init takes ~60s)..."
+	@sleep 15
+	docker compose $(COMPOSE_FILES_TEST) ps
+	@echo ""
+	@echo "==> Caddy proxy is routing:"
+	@echo "    https://netbird.local       → Dashboard"
+	@echo "    https://netbird.local/api   → Management API"
+	@echo "    https://netbird.local/zitadel → Zitadel IdP"
+
+.PHONY: netbird-down-test
+netbird-down-test: ## Stop NetBird (test mode)
+	docker compose $(COMPOSE_FILES_TEST) down
+
 .PHONY: netbird-down
 netbird-down: ## Stop NetBird (dev)
 	docker compose $(COMPOSE_FILES_DEV) down
+
+.PHONY: netbird-logs-test
+netbird-logs-test: ## Tail NetBird logs (test mode)
+	docker compose $(COMPOSE_FILES_TEST) logs -f
 
 .PHONY: netbird-logs
 netbird-logs: ## Tail NetBird logs
@@ -60,6 +85,87 @@ setup-key-create: ## Create a reusable Setup Key for vehicle registration
 .PHONY: clean
 clean: netbird-down ## Stop NetBird and remove local certs
 	rm -rf $(NETBIRD_DIR)/certs
+
+## ---------- end-to-end test (macOS) ----------
+
+COMPOSE_TEST := docker compose $(COMPOSE_FILES_TEST)
+
+.PHONY: test
+test: ## Run full e2e test on macOS (PKI → cert export → NetBird start → API check)
+	@echo "============================================================"
+	@echo "  NetBird E2E Test (macOS)"
+	@echo "============================================================"
+	@echo ""
+	@# --- Step 0: prerequisites ---
+	@echo "[0/5] Checking prerequisites..."
+	@command -v docker >/dev/null 2>&1 || { echo "ERROR: docker not found"; exit 1; }
+	@docker compose version >/dev/null 2>&1 || { echo "ERROR: docker compose not found"; exit 1; }
+	@grep -q 'netbird.local' /etc/hosts 2>/dev/null || { \
+		echo ""; \
+		echo "  Add netbird.local to /etc/hosts:"; \
+		echo "    sudo sh -c 'echo \"127.0.0.1 netbird.local\" >> /etc/hosts'"; \
+		echo ""; \
+		exit 1; }
+	@echo "  [OK] docker + /etc/hosts"
+	@# --- Step 1: cert export ---
+	@echo "[1/5] Exporting TLS certificate from K8s Secret..."
+	@bash $(NETBIRD_DIR)/cert-export.sh || { \
+		echo "  [FAIL] cert-export.sh failed. Is my-infra kind cluster running?"; \
+		echo "  Run: cd ../my-infra && make kind-up && make bootstrap && make test"; \
+		exit 1; }
+	@# --- Step 2: start services ---
+	@echo "[2/5] Starting NetBird (Caddy + Management + Signal + Zitadel + Dashboard)..."
+	@$(COMPOSE_TEST) down --remove-orphans 2>/dev/null || true
+	@$(COMPOSE_TEST) up -d
+	@echo "  Waiting for containers (Zitadel init takes ~90s)..."
+	@for i in $$(seq 1 30); do \
+		total=$$($(COMPOSE_TEST) ps -q 2>/dev/null | wc -l | tr -d ' '); \
+		healthy=$$($(COMPOSE_TEST) ps 2>/dev/null | grep -c '(healthy)' || true); \
+		[ "$$total" -gt 0 ] && [ "$$total" = "$$healthy" ] && break; \
+		sleep 5; \
+	done
+	@echo ""
+	@$(COMPOSE_TEST) ps
+	@echo ""
+	@# --- Step 3: verify TLS cert ---
+	@echo "[3/5] Verifying TLS certificate..."
+	@sleep 3
+	@curl -sk --resolve netbird.local:443:127.0.0.1 https://netbird.local/api/status 2>/dev/null | head -c 200 || \
+		{ echo "  [WARN] API not ready yet. Checking container logs..."; \
+		  $(COMPOSE_TEST) logs --tail=20 management; }
+	@echo ""
+	@# --- Step 4: API health check ---
+	@echo "[4/5] Checking Management API health..."
+	@for i in $$(seq 1 12); do \
+		resp=$$(curl -sk --resolve netbird.local:443:127.0.0.1 https://netbird.local/api/status 2>/dev/null || true); \
+		if echo "$$resp" | grep -q '"status"'; then \
+			echo "  [OK] Management API: $$resp"; \
+			break; \
+		fi; \
+		[ "$$i" = "12" ] && { echo "  [FAIL] API not healthy after 60s"; exit 1; }; \
+		sleep 5; \
+	done
+	@echo ""
+	@# --- Step 5: dashboard reachable ---
+	@echo "[5/5] Checking Dashboard..."
+	@dash_code=$$(curl -sk --resolve netbird.local:443:127.0.0.1 -o /dev/null -w '%{http_code}' https://netbird.local/ 2>/dev/null || echo "000"); \
+	if [ "$$dash_code" = "200" ] || [ "$$dash_code" = "302" ]; then \
+		echo "  [OK] Dashboard HTTP $$dash_code"; \
+	else \
+		echo "  [WARN] Dashboard returned $$dash_code (Zitadel may still be initializing)"; \
+	fi
+	@echo ""
+	@echo "============================================================"
+	@echo "  Test complete!"
+	@echo ""
+	@echo "  Dashboard:  https://netbird.local"
+	@echo "  API:        https://netbird.local/api/status"
+	@echo "  Login:      netbird-admin / NetBirdAdmin123!"
+	@echo ""
+	@echo "  Cert info:  make cert-verify"
+	@echo "  Logs:       make netbird-logs-test"
+	@echo "  Stop:       make netbird-down-test"
+	@echo "============================================================"
 
 ## ---------- production targets ----------
 

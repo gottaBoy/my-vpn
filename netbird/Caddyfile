@@ -1,0 +1,45 @@
+netbird.local {
+    # TLS termination with cert-manager issued certificate
+    tls /etc/caddy/certs/tls.crt /etc/caddy/certs/tls.key
+
+    # Management API + gRPC
+    handle /api/* {
+        reverse_proxy management:443 {
+            transport http {
+                tls_insecure_skip_verify
+            }
+        }
+    }
+    handle /management/* {
+        reverse_proxy management:443 {
+            transport http {
+                tls_insecure_skip_verify
+            }
+        }
+    }
+
+    # Signal exchange (WebSocket for WireGuard coordination)
+    handle /signalexchange/* {
+        reverse_proxy signal:10000
+    }
+
+    # Zitadel IdP (OIDC endpoints)
+    handle /zitadel/* {
+        reverse_proxy zitadel:8080
+    }
+    # Zitadel UI assets
+    handle /ui/* {
+        reverse_proxy zitadel:8080
+    }
+    handle /oidc/* {
+        reverse_proxy zitadel:8080
+    }
+    handle /caos/* {
+        reverse_proxy zitadel:8080
+    }
+
+    # Dashboard (SPA) — everything else
+    handle {
+        reverse_proxy dashboard:80
+    }
+}

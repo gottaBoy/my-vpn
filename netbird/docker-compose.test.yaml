@@ -1,0 +1,59 @@
+# macOS / local test overlay for docker-compose.yaml.
+# Fixes Docker Desktop issues: no host networking, adds Caddy reverse proxy.
+#
+# Usage:
+#   cp .env.example .env   # use defaults (NETBIRD_DOMAIN=netbird.local)
+#   sudo sh -c 'echo "127.0.0.1 netbird.local" >> /etc/hosts'
+#   docker compose -f docker-compose.yaml -f docker-compose.test.yaml up -d
+#
+# Then: open https://netbird.local
+
+version: "3.8"
+
+services:
+  # --- Caddy reverse proxy (TLS termination + routing) ---
+  # Replaces the need for host-network coturn and per-service port exposure.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs/tls.crt:/etc/caddy/certs/tls.crt:ro
+      - ./certs/tls.key:/etc/caddy/certs/tls.key:ro
+    depends_on:
+      - management
+      - signal
+      - zitadel
+      - dashboard
+    healthcheck:
+      test: ["CMD", "caddy", "version"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  # --- Management: remove public port (Caddy proxies) ---
+  management:
+    ports: []              # no direct exposure; Caddy handles TLS
+
+  # --- Signal: remove public port ---
+  signal:
+    ports: []
+
+  # --- Dashboard: remove public port ---
+  dashboard:
+    ports: []
+
+  # --- Coturn: disabled on macOS (no host networking) ---
+  # TURN/STUN is only needed for NAT traversal between peers behind
+  # symmetric NATs. API + Signal testing works without it.
+  coturn:
+    deploy:
+      replicas: 0
+
+  # --- Zitadel: expose for OIDC (Caddy proxies /zitadel/* → zitadel:8080) ---
+  zitadel:
+    ports:
+      - "8080:8080"
