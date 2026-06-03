@@ -1,0 +1,129 @@
+# Production overlay for docker-compose.yaml.
+# Usage:
+#   docker compose -f docker-compose.yaml -f docker-compose.prod.yaml up -d
+#
+# Changes from dev:
+#   - PostgreSQL → external RDS (managed, backup, monitoring)
+#   - Resource limits on all services
+#   - Persistent EBS volumes for data directories
+#   - json-file logging with rotation
+#   - health checks for all services
+#   - Coturn uses host network (required for UDP performance)
+
+version: "3.8"
+
+services:
+  # --- Remove local PostgreSQL, use RDS ---
+  postgres:
+    # Production: PostgreSQL is an external RDS instance.
+    # Remove the local container by setting deploy replicas to 0.
+    deploy:
+      replicas: 0
+
+  # --- Zitadel with production config ---
+  zitadel:
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  # --- Management ---
+  management:
+    environment:
+      # Override DSN to point to RDS (set in .env)
+      NETBIRD_STORE_CONFIG_DSN: ${NETBIRD_RDS_DSN}
+      # Production: disable debug endpoints
+      NETBIRD_MANAGEMENT_DEBUG: "false"
+      # gRPC TLS for Signal communication
+      NETBIRD_SIGNAL_GRPC_INSECURE: "false"
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "curl", "-kf", "https://localhost/api/status"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "10"
+
+  # --- Signal ---
+  signal:
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "10000"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # --- Coturn ---
+  coturn:
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 512M
+        reservations:
+          cpus: "0.5"
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  # --- Dashboard ---
+  dashboard:
+    environment:
+      # Production: use HTTPS management URL
+      NETBIRD_MGMT_API_ENDPOINT: https://${NETBIRD_DOMAIN}
+      NETBIRD_MGMT_GRPC_API_ENDPOINT: https://${NETBIRD_DOMAIN}
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"

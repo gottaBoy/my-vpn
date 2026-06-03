@@ -1,0 +1,4 @@
+# Exported TLS certificates (pulled from K8s Secret by cert-export.sh)
+*.crt
+*.key
+*.pem

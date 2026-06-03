@@ -1,0 +1,23 @@
+[Unit]
+Description=NetBird VPN Platform (Management + Signal + Coturn + Dashboard)
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/netbird
+ExecStartPre=/usr/bin/docker compose -f docker-compose.yaml -f docker-compose.prod.yaml pull
+ExecStart=/usr/bin/docker compose -f docker-compose.yaml -f docker-compose.prod.yaml up -d
+ExecStop=/usr/bin/docker compose -f docker-compose.yaml -f docker-compose.prod.yaml down
+ExecReload=/usr/bin/docker compose -f docker-compose.yaml -f docker-compose.prod.yaml restart management signal coturn
+StandardOutput=journal
+StandardError=journal
+Restart=on-failure
+RestartSec=30
+TimeoutStartSec=300
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

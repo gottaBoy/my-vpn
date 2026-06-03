@@ -1,0 +1,30 @@
+# Zitadel minimal config for NetBird IdP (dev/testing).
+# Production: use external SSO (OIDC) and a proper Zitadel deployment.
+
+FirstInstance:
+  Org:
+    Human:
+      UserName: netbird-admin
+      Password: "${ZITADEL_ADMIN_PASSWORD:-NetBirdAdmin123!}"
+      LoginName:
+        UserName: netbird-admin
+    MachineKeyPath: /zitadel/admin-key.json
+  InstanceName: NetBird
+  DefaultLanguage: en
+
+Database:
+  postgres:
+    Host: postgres
+    Port: 5432
+    Database: zitadel
+    User:
+      Username: netbird
+      Password: "${POSTGRES_PASSWORD:-netbird}"
+    Admin:
+      Username: netbird
+      Password: "${POSTGRES_PASSWORD:-netbird}"
+
+Projections:
+  Customizations:
+    Notifications:
+      Enabled: false

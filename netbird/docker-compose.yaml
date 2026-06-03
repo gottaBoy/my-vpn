@@ -1,0 +1,113 @@
+# NetBird self-hosted — Management + Signal + Coturn + Dashboard + Zitadel IdP
+# PKI integration: TLS certs issued by my-infra cert-manager (Vault → cert-manager → Secret).
+# Run cert-export.sh first to extract netbird-tls-secret into ./certs/.
+#
+# Quickstart:
+#   cd my-vpn/netbird
+#   cp .env.example .env   # edit NETBIRD_DOMAIN, TURN_PASSWORD
+#   bash cert-export.sh    # pull TLS cert from K8s Secret
+#   docker compose up -d
+#
+# Official reference: https://github.com/netbirdio/netbird/blob/main/infrastructure_files/docker-compose.yml
+
+version: "3.8"
+
+services:
+  # --- PostgreSQL (shared by Management + Zitadel) ---
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: netbird
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-netbird}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U netbird"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # --- Zitadel IdP (built-in OIDC provider) ---
+  zitadel:
+    image: ghcr.io/zitadel/zitadel:latest
+    restart: unless-stopped
+    command: start-from-init --masterkey ${ZITADEL_MASTERKEY:-MasterkeyForDevOnly} --tlsMode external --config /zitadel-config.yaml
+    volumes:
+      - ./zitadel-config.yaml:/zitadel-config.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # --- NetBird Management ---
+  management:
+    image: netbirdio/management:latest
+    restart: unless-stopped
+    volumes:
+      - netbird-mgmt-data:/var/lib/netbird
+      - ./certs/tls.crt:/etc/netbird/tls.crt:ro
+      - ./certs/tls.key:/etc/netbird/tls.key:ro
+    environment:
+      NETBIRD_MANAGEMENT_DOMAIN: ${NETBIRD_DOMAIN}
+      NETBIRD_STORE_ENGINE: postgres
+      NETBIRD_STORE_CONFIG_DSN: postgres://netbird:${POSTGRES_PASSWORD:-netbird}@postgres:5432/netbird?sslmode=disable
+      NETBIRD_MANAGEMENT_TURN_PASSWORD: ${TURN_PASSWORD}
+      NETBIRD_AUTH_OIDC_CONFIGURATION_ENDPOINT: https://${NETBIRD_DOMAIN}/zitadel/.well-known/openid-configuration
+      NETBIRD_AUTH_CLIENT_ID: netbird
+      NETBIRD_AUTH_SUPPORT_AUTO_REGISTER: "true"
+      NETBIRD_AUTH_AUDIENCE: netbird-client
+      NETBIRD_IDP_MGMT_EXTRA_ADMIN_FULL_NAME: "Platform Admin"
+      NETBIRD_MANAGEMENT_TLSCERTFILE: /etc/netbird/tls.crt
+      NETBIRD_MANAGEMENT_TLSKEYFILE: /etc/netbird/tls.key
+    ports:
+      - "443:443"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # --- NetBird Signal (WireGuard coordination) ---
+  signal:
+    image: netbirdio/signal:latest
+    restart: unless-stopped
+    volumes:
+      - ./certs/tls.crt:/etc/netbird/tls.crt:ro
+      - ./certs/tls.key:/etc/netbird/tls.key:ro
+    environment:
+      NETBIRD_SIGNAL_TLSCERTFILE: /etc/netbird/tls.crt
+      NETBIRD_SIGNAL_TLSKEYFILE: /etc/netbird/tls.key
+    ports:
+      - "10000:10000"
+
+  # --- Coturn (TURN/STUN relay) ---
+  coturn:
+    image: coturn/coturn:4.6-alpine
+    restart: unless-stopped
+    volumes:
+      - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "5349:5349/tcp"
+      - "49152-49172:49152-49172/udp"
+    network_mode: host
+
+  # --- NetBird Dashboard ---
+  dashboard:
+    image: netbirdio/dashboard:latest
+    restart: unless-stopped
+    environment:
+      NETBIRD_MGMT_API_ENDPOINT: https://${NETBIRD_DOMAIN}
+      NETBIRD_MGMT_GRPC_API_ENDPOINT: https://${NETBIRD_DOMAIN}
+    ports:
+      - "80:80"
+    depends_on:
+      - management
+
+volumes:
+  postgres-data:
+  netbird-mgmt-data:
