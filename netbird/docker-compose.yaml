@@ -16,7 +16,7 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: netbird
+      POSTGRES_USER: ${POSTGRES_USER:-netbird}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-netbird}
       POSTGRES_MULTIPLE_DATABASES: netbird,zitadel
     volumes:
@@ -86,8 +86,8 @@ services:
       NETBIRD_SIGNAL_PORT: "10000"
       NETBIRD_SIGNAL_ADDR: ${NETBIRD_DOMAIN}:10000
       NB_DATASTORE_ENCRYPTION_KEY: ${NB_DATASTORE_ENCRYPTION_KEY:-LXqg45oj5CD/zGjbbuAfDhfNUzWLAU1KxyunAayFmY4=}
-      NB_STORE_ENGINE_POSTGRES_DSN: postgres://netbird:${POSTGRES_PASSWORD:-netbird}@postgres:5432/netbird?sslmode=disable
-      NETBIRD_STORE_CONFIG_DSN: postgres://netbird:${POSTGRES_PASSWORD:-netbird}@postgres:5432/netbird?sslmode=disable
+      NB_STORE_ENGINE_POSTGRES_DSN: postgres://${POSTGRES_USER:-netbird}:${POSTGRES_PASSWORD:-netbird}@postgres:5432/netbird?sslmode=disable
+      NETBIRD_STORE_CONFIG_DSN: postgres://${POSTGRES_USER:-netbird}:${POSTGRES_PASSWORD:-netbird}@postgres:5432/netbird?sslmode=disable
       NETBIRD_MANAGEMENT_TURN_PASSWORD: ${TURN_PASSWORD}
       NETBIRD_IDP_MGMT_EXTRA_ADMIN_FULL_NAME: "Platform Admin"
       NETBIRD_MANAGEMENT_TLSCERTFILE: /etc/netbird/tls.crt
