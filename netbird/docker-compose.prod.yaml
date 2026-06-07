@@ -10,8 +10,6 @@
 #   - health checks for all services
 #   - Coturn uses host network (required for UDP performance)
 
-version: "3.8"
-
 services:
   # --- Remove local PostgreSQL, use RDS ---
   postgres:
@@ -40,7 +38,8 @@ services:
   # --- Management ---
   management:
     environment:
-      # Override DSN to point to RDS (set in .env)
+      # Override DSNs to point to RDS (set in .env)
+      NB_STORE_ENGINE_POSTGRES_DSN: ${NETBIRD_RDS_DSN}
       NETBIRD_STORE_CONFIG_DSN: ${NETBIRD_RDS_DSN}
       # Production: disable debug endpoints
       NETBIRD_MANAGEMENT_DEBUG: "false"

@@ -1,11 +1,12 @@
-# Zitadel minimal config for NetBird IdP (dev/testing).
-# Production: use external SSO (OIDC) and a proper Zitadel deployment.
+# Zitadel config for NetBird IdP.
+# All secrets are injected via environment variables — do NOT hardcode passwords.
+# Reference: https://zitadel.com/docs/self-hosting/manage/configure
 
 FirstInstance:
   Org:
     Human:
       UserName: netbird-admin
-      Password: "${ZITADEL_ADMIN_PASSWORD:-NetBirdAdmin123!}"
+      # Password is set via env var ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD
       LoginName:
         UserName: netbird-admin
     MachineKeyPath: /zitadel/admin-key.json
@@ -19,10 +20,10 @@ Database:
     Database: zitadel
     User:
       Username: netbird
-      Password: "${POSTGRES_PASSWORD:-netbird}"
+      Password: netbird
     Admin:
       Username: netbird
-      Password: "${POSTGRES_PASSWORD:-netbird}"
+      Password: netbird
 
 Projections:
   Customizations:

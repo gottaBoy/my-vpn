@@ -75,11 +75,13 @@ make kind-up && make bootstrap && make test
 cd ../my-vpn
 cp netbird/.env.example netbird/.env   # 默认即 netbird.local
 make test
+make test && ./auto-init.sh
 # → 自动完成: 证书导出 → 容器启动 → API 健康检查 → Dashboard 验证
 
 # 3. 访问 Dashboard
-open https://netbird.local
-# 首次登录: netbird-admin / NetBirdAdmin123!
+open https://netbird.local:8443
+# 首次登录: zitadel-admin@zitadel.${NETBIRD_DOMAIN} / ${ZITADEL_ADMIN_PASSWORD}
+# （默认测试凭据: zitadel-admin@zitadel.netbird.local / NetBirdAdmin123!）
 
 # 4. 查看状态
 make cert-verify           # 证书详情（SANs、有效期）
@@ -87,10 +89,74 @@ make netbird-logs-test     # 实时日志
 make netbird-down-test     # 停止
 ```
 
+生产部署
+```shell
+# 1. 生成所有密钥
+ZITADEL_MASTERKEY=$(openssl rand -base64 32 | head -c 32)
+ZITADEL_ADMIN_PASSWORD=$(openssl rand -base64 24)
+POSTGRES_PASSWORD=$(openssl rand -base64 24)
+TURN_PASSWORD=$(openssl rand -base64 32)
+
+# 2. 写入 .env（权限 600）
+cat > netbird/.env << EOF
+NETBIRD_DOMAIN=netbird.yourcompany.com
+ZITADEL_MASTERKEY=${ZITADEL_MASTERKEY}
+ZITADEL_ADMIN_PASSWORD=${ZITADEL_ADMIN_PASSWORD}
+POSTGRES_HOST=postgres
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+TURN_PASSWORD=${TURN_PASSWORD}
+TURN_EXTERNAL_IP=<EC2_EIP>
+EOF
+chmod 600 netbird/.env
+
+# 3. 全新空数据库启动（确保 FirstInstance 生效）
+docker compose -f docker-compose.yaml -f docker-compose.prod.yaml up -d
+```
+
+## 全流程测试（macOS 客户端）
+
+```bash
+# === 第一步：启动服务端 ===
+make test
+# → 所有容器 healthy，Dashboard 可访问
+
+# === 第二步：安装 netbird CLI ===
+make client-install
+# 或手动下载: https://github.com/netbirdio/netbird/releases/latest
+# macOS ARM64: netbird_0.71.4_darwin_arm64.tar.gz
+#   tar xzf netbird_*.tar.gz && sudo cp netbird /usr/local/bin/
+
+# === 第三步：创建 Setup Key ===
+# 方式 A：Dashboard（推荐）
+open https://netbird.local
+# https://netbird.local:8443/ui/console
+# 登录 → Setup Keys → Create → 复制 Key
+
+# 方式 B：API（需要先创建 PAT）
+# Dashboard → Settings → Personal Access Tokens → Create
+# make setup-key-create PAT=<your-pat-token>
+
+# === 第四步：连接客户端 ===
+make client-up SETUP_KEY=<your-setup-key>
+
+curl -fsSL https://pkgs.netbird.io/install.sh | sh
+netbird up --management-url https://netbird.local:8443 --setup-key 84280100-7047-4374-A39A-16D3EABCFCDB
+# 或手动：
+#   sudo netbird up --management-url https://netbird.local:8443 --setup-key <KEY> --hostname macos-test
+
+# === 第五步：验证 ===
+netbird status              # 查看状态
+netbird peers               # 查看对等节点
+ping 10.99.0.X              # Ping 其他节点的 WireGuard IP（如有）
+
+# === 断开 ===
+make client-down
+```
+
 ### 测试架构（macOS）
 
 ```
-                    https://netbird.local:443
+                    https://netbird.local:8443
                            │
                     ┌──────┴──────┐
                     │    Caddy    │  ← TLS 终止（cert-manager 证书）
@@ -147,6 +213,43 @@ sudo netbird up \
   --management-url "${MGMT_URL}" \
   --setup-key "${SETUP_KEY}" \
   --hostname "${VIN}"                  # 用 VIN 作为节点名
+```
+
+## 客户端验证
+```shell
+# === 第 1 步: 停掉旧客户端 ===
+sudo netbird down
+
+# === 第 2 步: 升级客户端到 0.72.1 ===
+# https://maxmind.github.io/MaxMind-DB/
+
+docker cp netbird/GeoLite2-City_20260602.mmdb netbird-management-1:/var/lib/netbird/
+docker cp netbird/geonames_20260602.db netbird-management-1:/var/lib/netbird/
+docker compose -f netbird/docker-compose.yaml -f netbird/docker-compose.test.yaml restart management
+
+# 下载最新版:
+curl -L -o /tmp/netbird.tar.gz \
+  https://github.com/netbirdio/netbird/releases/download/v0.72.1/netbird_0.72.1_darwin_arm64.tar.gz
+tar xzf /tmp/netbird.tar.gz -C /tmp
+sudo cp /tmp/netbird /usr/local/bin/netbird
+sudo chmod +x /usr/local/bin/netbird
+netbird version   # 应显示 0.72.1
+
+# === 第 3 步: 在 Dashboard 创建 Setup Key ===
+open https://netbird.local:8443
+# 登录 → Settings → Setup Keys → Create
+# 复制生成的 Key
+
+# === 第 4 步: 连接客户端到本地服务端 ===
+sudo netbird up \
+  --management-url https://netbird.local:8443 \
+  --setup-key <你的-setup-key> \
+  --hostname macos-test \
+  --log-level info
+
+# === 第 5 步: 验证连接 ===
+netbird status
+# 应显示: Status: Connected  /  Peers: X
 ```
 
 Setup Key 通过 Dashboard 或 API 创建（`make setup-key-create`）。

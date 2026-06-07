@@ -72,15 +72,130 @@ netbird-status: ## Check NetBird API health
 		echo "NetBird not reachable. Is it running? (make netbird-up)"
 
 .PHONY: setup-key-create
-setup-key-create: ## Create a reusable Setup Key for vehicle registration
+setup-key-create: ## Create a reusable Setup Key for vehicle registration (requires PAT)
 	@echo "Creating reusable setup key (valid 30 days, 1000 uses)..."
-	@echo "Run this after logging into Dashboard at http://localhost"
 	@echo ""
-	@echo "Via API (requires admin token):"
-	@echo '  curl -X POST https://netbird.internal/api/setup-keys \'
-	@echo '    -H "Authorization: Token $$NETBIRD_TOKEN" \'
-	@echo '    -H "Content-Type: application/json" \'
-	@echo '    -d '"'"'{"name":"factory-fleet","type":"reusable","usage_limit":1000,"expires_in":2592000}'"'"
+	@echo "  First, create a PAT in Dashboard:"
+	@echo "    1. Open https://netbird.local"
+	@echo "    2. Login → Settings → Personal Access Tokens"
+	@echo "    3. Create token → copy it"
+	@echo ""
+	@echo "  Then run:"
+	@echo '    make setup-key-create PAT=<your-token>'
+	@echo ""
+	@if [ -n "$$PAT" ]; then \
+		curl -sk -X POST "https://netbird.local:8443/api/setup-keys" \
+			-H "Authorization: Token $$PAT" \
+			-H "Content-Type: application/json" \
+			-d '{"name":"factory-fleet","type":"reusable","usage_limit":1000,"expires_in":2592000}'; \
+	fi
+
+## ---------- client E2E test ----------
+
+.PHONY: client-install
+client-install: ## Install netbird CLI on macOS
+	@echo "==> Installing netbird CLI..."
+	@if command -v netbird >/dev/null 2>&1; then \
+		echo "  [OK] netbird $(netbird version 2>/dev/null || echo 'installed')"; \
+	elif [ -f /usr/local/bin/netbird ]; then \
+		echo "  [OK] found at /usr/local/bin/netbird"; \
+	else \
+		echo ""; \
+		echo "  Download from: https://github.com/netbirdio/netbird/releases/latest"; \
+		echo "  macOS ARM64: netbird_0.72.1_darwin_arm64.tar.gz"; \
+		echo ""; \
+		echo "  tar xzf netbird_*.tar.gz"; \
+		echo "  sudo cp netbird /usr/local/bin/"; \
+		echo "  sudo chmod +x /usr/local/bin/netbird"; \
+		exit 1; \
+	fi
+
+.PHONY: client-up
+client-up: ## Connect netbird client to local server (requires SETUP_KEY env)
+	@echo "==> Connecting netbird client..."
+	@command -v netbird >/dev/null 2>&1 || { echo "ERROR: Install netbird first: make client-install"; exit 1; }
+	@test -n "$$SETUP_KEY" || { \
+		echo "ERROR: SETUP_KEY not set."; \
+		echo "  Create one in Dashboard: https://netbird.local → Setup Keys"; \
+		echo "  Then: make client-up SETUP_KEY=<your-key>"; \
+		exit 1; \
+	}
+	@echo "  Management URL: https://netbird.local:8443"
+	@echo "  Setup key: $${SETUP_KEY:0:8}..."
+	@sudo netbird down 2>/dev/null || true
+	sudo netbird up \
+		--management-url "https://netbird.local:8443" \
+		--setup-key "$$SETUP_KEY" \
+		--hostname "macos-test" \
+		--log-level info
+	@sleep 3
+	@echo ""
+	@echo "==> Client status:"
+	@netbird status
+
+.PHONY: client-down
+client-down: ## Disconnect netbird client
+	sudo netbird down 2>/dev/null || echo "netbird not running"
+
+.PHONY: client-status
+client-status: ## Show netbird client status and peers
+	netbird status 2>/dev/null || echo "netbird not running"
+
+.PHONY: client-test
+client-test: client-install ## Full client E2E test (server must be running: make test first)
+	@echo "============================================================"
+	@echo "  NetBird Client E2E Test"
+	@echo "============================================================"
+	@echo ""
+	@# Check server
+	@echo "[1/4] Checking server..."
+	@dash_code=$$(curl -sk -o /dev/null -w '%{http_code}' https://netbird.local:8443/ 2>/dev/null); \
+	if [ "$$dash_code" = "200" ] || [ "$$dash_code" = "302" ]; then \
+		echo "  [OK] Server reachable (HTTP $$dash_code)"; \
+	else \
+		echo "  [FAIL] Server not reachable. Run 'make test' first."; \
+		exit 1; \
+	fi
+	@# Check setup key
+	@echo "[2/4] Setup key..."
+	@test -n "$$SETUP_KEY" || { \
+		echo ""; \
+		echo "  ⚠  SETUP_KEY not set. Create one:"; \
+		echo "    1. Open https://netbird.local"; \
+		echo "    2. Login → Setup Keys → Create"; \
+		echo "    3. Copy key → re-run: make client-test SETUP_KEY=<key>"; \
+		echo ""; \
+		exit 1; \
+	}
+	@echo "  [OK] SETUP_KEY=$${SETUP_KEY:0:8}..."
+	@# Connect client
+	@echo "[3/4] Connecting client..."
+	@sudo netbird down 2>/dev/null || true
+	@sudo netbird up \
+		--management-url "https://netbird.local:8443" \
+		--setup-key "$$SETUP_KEY" \
+		--hostname "macos-test" \
+		--log-level info 2>&1 | tail -5
+	@sleep 5
+	@# Verify
+	@echo "[4/4] Verifying connectivity..."
+	@STATUS=$$(netbird status 2>/dev/null || echo ""); \
+	echo "$$STATUS"; \
+	if echo "$$STATUS" | grep -qi 'connected\|running'; then \
+		echo ""; \
+		echo "  [OK] Client connected successfully!"; \
+		echo "  Peers: $$(netbird status 2>/dev/null | grep -i peers || echo 'check status')"; \
+	else \
+		echo "  [WARN] Check status manually: netbird status"; \
+	fi
+	@echo ""
+	@echo "============================================================"
+	@echo "  Client test complete!"
+	@echo ""
+	@echo "  Status:   netbird status"
+	@echo "  Disconnect: make client-down"
+	@echo "  Logs:     sudo netbird up --log-level trace   (verbose)"
+	@echo "============================================================"
 
 .PHONY: clean
 clean: netbird-down ## Stop NetBird and remove local certs
@@ -154,6 +269,10 @@ test: ## Run full e2e test on macOS (PKI → cert export → NetBird start → A
 	else \
 		echo "  [WARN] Dashboard returned $$dash_code (Zitadel may still be initializing)"; \
 	fi
+	@echo ""
+	@# --- Step 6: auto-init Zitadel OIDC ---
+	@echo "[6/6] Auto-configuring Zitadel OIDC application..."
+	@NETBIRD_DOMAIN="$${NETBIRD_DOMAIN:-netbird.local}" bash $(NETBIRD_DIR)/auto-init.sh
 	@echo ""
 	@echo "============================================================"
 	@echo "  Test complete!"

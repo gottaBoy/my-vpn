@@ -1,0 +1,14 @@
+# Environment secrets — NEVER commit
+netbird/.env
+*.env
+!.env.example
+
+# Exported TLS certificates
+netbird/certs/
+
+# Zitadel machine keys & tokens
+netbird/machinekey/
+netbird/login-client.pat
+
+# Docker volumes
+netbird/postgres-data/

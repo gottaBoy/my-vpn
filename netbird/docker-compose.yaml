@@ -10,8 +10,6 @@
 #
 # Official reference: https://github.com/netbirdio/netbird/blob/main/infrastructure_files/docker-compose.yml
 
-version: "3.8"
-
 services:
   # --- PostgreSQL (shared by Management + Zitadel) ---
   postgres:
@@ -20,8 +18,10 @@ services:
     environment:
       POSTGRES_USER: netbird
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-netbird}
+      POSTGRES_MULTIPLE_DATABASES: netbird,zitadel
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ./init-postgres.sh:/docker-entrypoint-initdb.d/init.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U netbird"]
       interval: 5s
@@ -35,35 +35,75 @@ services:
     command: start-from-init --masterkey ${ZITADEL_MASTERKEY:-MasterkeyForDevOnly} --tlsMode external --config /zitadel-config.yaml
     volumes:
       - ./zitadel-config.yaml:/zitadel-config.yaml:ro
+      - ./machinekey:/machinekey
+      - ./login-client.pat:/login-client.pat
+    environment:
+      ZITADEL_EXTERNALDOMAIN: ${NETBIRD_DOMAIN}
+      ZITADEL_EXTERNALPORT: 8443
+      ZITADEL_EXTERNALSECURE: "true"
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD: ${ZITADEL_ADMIN_PASSWORD:-NetBirdAdmin123}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      ZITADEL_FIRSTINSTANCE_PATPATH: /machinekey/zitadel-admin-sa.token
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_USERNAME: zitadel-admin-sa
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_NAME: Admin
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_SCOPES: openid
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE: "2030-01-01T00:00:00Z"
+      ZITADEL_FIRSTINSTANCE_LOGINCLIENTPATPATH: /login-client.pat
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_MACHINE_USERNAME: login-client
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_MACHINE_NAME: "Login Client"
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_PAT_EXPIRATIONDATE: "2030-01-01T00:00:00Z"
     depends_on:
       postgres:
         condition: service_healthy
 
+  # --- Zitadel Login UI (v4 separate container, port 3000) ---
+  zitadel-login:
+    image: ghcr.io/zitadel/zitadel-login:latest
+    restart: unless-stopped
+    environment:
+      ZITADEL_API_URL: http://zitadel:8080
+      NEXT_PUBLIC_BASE_PATH: /ui/v2/login
+      ZITADEL_SERVICE_USER_TOKEN_FILE: /login-client.pat
+      CUSTOM_REQUEST_HEADERS: "Host:${NETBIRD_DOMAIN}"
+    volumes:
+      - ./login-client.pat:/login-client.pat:ro
+    depends_on:
+      zitadel:
+        condition: service_started
+
   # --- NetBird Management ---
   management:
-    image: netbirdio/management:latest
+    image: netbirdio/management:${NETBIRD_VERSION:-latest}
     restart: unless-stopped
     volumes:
       - netbird-mgmt-data:/var/lib/netbird
+      - ./management.json:/etc/netbird/management.json:ro
       - ./certs/tls.crt:/etc/netbird/tls.crt:ro
       - ./certs/tls.key:/etc/netbird/tls.key:ro
     environment:
       NETBIRD_MANAGEMENT_DOMAIN: ${NETBIRD_DOMAIN}
-      NETBIRD_STORE_ENGINE: postgres
+      NETBIRD_SIGNAL_PORT: "10000"
+      NETBIRD_SIGNAL_ADDR: ${NETBIRD_DOMAIN}:10000
+      NB_DATASTORE_ENCRYPTION_KEY: "LXqg45oj5CD/zGjbbuAfDhfNUzWLAU1KxyunAayFmY4="
+      NB_STORE_ENGINE_POSTGRES_DSN: postgres://netbird:${POSTGRES_PASSWORD:-netbird}@postgres:5432/netbird?sslmode=disable
       NETBIRD_STORE_CONFIG_DSN: postgres://netbird:${POSTGRES_PASSWORD:-netbird}@postgres:5432/netbird?sslmode=disable
       NETBIRD_MANAGEMENT_TURN_PASSWORD: ${TURN_PASSWORD}
-      NETBIRD_AUTH_OIDC_CONFIGURATION_ENDPOINT: https://${NETBIRD_DOMAIN}/zitadel/.well-known/openid-configuration
-      NETBIRD_AUTH_CLIENT_ID: netbird
-      NETBIRD_AUTH_SUPPORT_AUTO_REGISTER: "true"
-      NETBIRD_AUTH_AUDIENCE: netbird-client
       NETBIRD_IDP_MGMT_EXTRA_ADMIN_FULL_NAME: "Platform Admin"
       NETBIRD_MANAGEMENT_TLSCERTFILE: /etc/netbird/tls.crt
       NETBIRD_MANAGEMENT_TLSKEYFILE: /etc/netbird/tls.key
+      SSL_CERT_FILE: /etc/netbird/tls.crt
+    # Management only serves internal docker network (Caddy or ALB handles TLS).
+    # For standalone use without reverse proxy, override with -f docker-compose.standalone.yaml
     ports:
-      - "443:443"
+      - "9443:443"
+    extra_hosts:
+      - "${NETBIRD_DOMAIN}:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
+      zitadel:
+        condition: service_started
     logging:
       driver: json-file
       options:
@@ -72,7 +112,7 @@ services:
 
   # --- NetBird Signal (WireGuard coordination) ---
   signal:
-    image: netbirdio/signal:latest
+    image: netbirdio/signal:${NETBIRD_VERSION:-latest}
     restart: unless-stopped
     volumes:
       - ./certs/tls.crt:/etc/netbird/tls.crt:ro
@@ -104,7 +144,7 @@ services:
       NETBIRD_MGMT_API_ENDPOINT: https://${NETBIRD_DOMAIN}
       NETBIRD_MGMT_GRPC_API_ENDPOINT: https://${NETBIRD_DOMAIN}
     ports:
-      - "80:80"
+      - "9080:80"
     depends_on:
       - management
 

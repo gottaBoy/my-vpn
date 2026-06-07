@@ -1,45 +1,66 @@
 netbird.local {
-    # TLS termination with cert-manager issued certificate
     tls /etc/caddy/certs/tls.crt /etc/caddy/certs/tls.key
 
-    # Management API + gRPC
-    handle /api/* {
-        reverse_proxy management:443 {
+    # --- Zitadel Login UI (v4, separate container port 3000) ---
+    handle /ui/v2/login/* {
+        reverse_proxy zitadel-login:3000
+    }
+
+    # --- Zitadel: all paths starting with /zitadel (includes gRPC-web /zitadel.xxx.*) ---
+    handle /zitadel* {
+        reverse_proxy h2c://zitadel:8080
+    }
+    # --- Zitadel API (OAuth, OIDC, Console, Admin REST) ---
+    handle /oauth/v2/* {
+        reverse_proxy h2c://zitadel:8080
+    }
+    handle /.well-known/openid-configuration {
+        reverse_proxy h2c://zitadel:8080
+    }
+    handle /ui/console* {
+        reverse_proxy h2c://zitadel:8080
+    }
+    handle /management/v1/* {
+        reverse_proxy h2c://zitadel:8080
+    }
+    handle /admin/v1/* {
+        reverse_proxy h2c://zitadel:8080
+    }
+    handle /auth/v1/* {
+        reverse_proxy h2c://zitadel:8080
+    }
+    handle /oidc/v1/* {
+        reverse_proxy h2c://zitadel:8080
+    }
+    handle /v2/* {
+        reverse_proxy h2c://zitadel:8080
+    }
+
+    # --- NetBird Management API (gRPC + REST) ---
+    handle /management.ManagementService/* {
+        reverse_proxy https://management:443 {
             transport http {
                 tls_insecure_skip_verify
             }
         }
     }
-    handle /management/* {
-        reverse_proxy management:443 {
+    handle /api/* {
+        reverse_proxy https://management:443 {
             transport http {
                 tls_insecure_skip_verify
             }
         }
     }
 
-    # Signal exchange (WebSocket for WireGuard coordination)
+    # --- Signal (WebSocket) ---
+    handle /signalexchange.SignalExchange/* {
+        reverse_proxy h2c://signal:10000
+    }
     handle /signalexchange/* {
         reverse_proxy signal:10000
     }
 
-    # Zitadel IdP (OIDC endpoints)
-    handle /zitadel/* {
-        reverse_proxy zitadel:8080
-    }
-    # Zitadel UI assets
-    handle /ui/* {
-        reverse_proxy zitadel:8080
-    }
-    handle /oidc/* {
-        reverse_proxy zitadel:8080
-    }
-    handle /caos/* {
-        reverse_proxy zitadel:8080
-    }
-
-    # Dashboard (SPA) — everything else
-    handle {
-        reverse_proxy dashboard:80
-    }
+    # --- NetBird Dashboard (default: all other paths) ---
+    reverse_proxy dashboard:80
 }
+
