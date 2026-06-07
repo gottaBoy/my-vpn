@@ -1,15 +1,10 @@
 # NetBird 生产环境部署指南
 
-## 部署决策：EC2 + docker-compose，而非 K8s Operator
+## 部署策略
 
-### 核心原因
+单机 EC2（4C8G）+ RDS PostgreSQL，docker-compose 部署，支持 20 台车。
 
-NetBird 的关键组件 **Coturn（TURN/STUN 中继）** 需要：
-- **Host 网络模式**：UDP 端口范围 49152-49172，K8s 中需绕过 CNI 使用 `hostNetwork: true`
-- **客户端真实源 IP**：TURN 协议依赖源 IP，K8s Service 默认做 SNAT
-- **低延迟 UDP 转发**：每增加一跳都会增加延迟
-
-将这些放到 K8s 中会引入不必要的复杂度，而 NetBird 本质上是一个 **6 容器的单体应用**，不需要 K8s 的编排能力。
+Coturn 用 host network 保证 UDP 性能，后续扩展时拆到独立机器。
 
 ### 全局架构
 
@@ -32,26 +27,31 @@ NetBird 的关键组件 **Coturn（TURN/STUN 中继）** 需要：
 │                                                                  │
 │  /opt/netbird/                                                   │
 │  ├── docker-compose.yaml          # 基础服务定义                  │
-│  ├── docker-compose.prod.yaml     # 生产覆盖（RDS/资源限制）       │
+│  ├── docker-compose.prod.yaml     # 生产覆盖（Caddy+RDS+资源限制） │
+│  ├── Caddyfile                    # Caddy 路由规则                │
+│  ├── zitadel-config.yaml          # Zitadel IdP 配置              │
+│  ├── management.json.example      # Management 配置模板            │
+│  ├── auto-init.sh                 # OIDC 自动初始化                │
+│  ├── turnserver.conf              # Coturn TURN/STUN              │
 │  ├── .env                         # 环境变量（密钥/域名）          │
-│  ├── certs/                       # TLS 证书（cert-export.sh →）  │
-│  ├── cert-renew-cron.sh           # 证书自动轮换脚本              │
+│  ├── certs/                       # TLS 证书                      │
+│  ├── cert-renew-cron.sh           # 证书自动轮换                  │
 │  └── /etc/systemd/system/netbird.service  # systemd 托管         │
 │                                                                  │
 │  ┌──────────────────────────────────────────────────────────┐    │
 │  │  docker compose 容器组                                    │    │
 │  │  ┌──────────┐ ┌────────┐ ┌──────────┐ ┌────────────┐     │    │
-│  │  │Management│ │ Signal │ │Dashboard │ │   Coturn   │     │    │
-│  │  │  :443    │ │ :10000 │ │   :80    │ │:3478:5349  │     │    │
-│  │  │  TLS ✅  │ │ TLS ✅ │ │          │ │ UDP ✅     │     │    │
-│  │  └──────────┘ └────────┘ └──────────┘ └────────────┘     │    │
-│  │  ┌──────────┐                                             │    │
-│  │  │ Zitadel  │  PostgreSQL → AWS RDS (外部)                 │    │
-│  │  │  IdP     │                                             │    │
-│  │  └──────────┘                                             │    │
+│  │  │  Caddy   │ │ Signal │ │Dashboard │ │   Coturn   │     │    │
+│  │  │ :443,80  │ │ :10000 │ │   :80    │ │:3478:5349  │     │    │
+│  │  └────┬─────┘ └────────┘ └──────────┘ └────────────┘     │    │
+│  │       │                                                   │    │
+│  │  ┌────┴─────┐ ┌────────┐                                 │    │
+│  │  │Management│ │Zitadel │  PostgreSQL → AWS RDS (外部)     │    │
+│  │  │  :443    │ │  IdP   │                                 │    │
+│  │  └──────────┘ └────────┘                                 │    │
 │  └──────────────────────────────────────────────────────────┘    │
 │                                                                  │
-│  安全组: 443+10000/TCP, 3478+5349/UDP, 22/TCP(管理)              │
+│  安全组: 80+443+10000/TCP, 3478+5349/UDP, 22/TCP(管理)          │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -88,88 +88,71 @@ sudo install kubectl /usr/local/bin/
 ### 3. 部署 NetBird
 
 ```bash
-# 克隆 / 同步部署文件
-sudo mkdir -p /opt/netbird
-cd /opt/netbird
+sudo mkdir -p /opt/netbird && cd /opt/netbird
 # 从 my-vpn/netbird/ 复制文件:
-#   docker-compose.yaml, docker-compose.prod.yaml
-#   zitadel-config.yaml, turnserver.conf
-#   cert-renew-cron.sh, netbird.service
+#   docker-compose.yaml, docker-compose.prod.yaml, Caddyfile
+#   zitadel-config.yaml, management.json.example, auto-init.sh
+#   turnserver.conf, cert-renew-cron.sh, netbird.service
 
 # 配置环境变量
-cp .env.example .env
+cp .env.example .env && chmod 600 .env
 vim .env  # 填入实际值（见下方）
 
-# 首次拉取 TLS 证书
-bash cert-export.sh
+# 放置 TLS 证书到 ./certs/
+# （kubectl 可用时: bash cert-export.sh）
 
-# 安装 systemd 并启动
+# 启动
+docker compose -f docker-compose.yaml -f docker-compose.prod.yaml up -d
+
+# 等 Zitadel 初始化完成后自动配置
+NETBIRD_PORT=443 ./auto-init.sh
+
+# 安装 systemd
 sudo cp netbird.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now netbird
-sudo systemctl status netbird
-
-# 安装证书自动轮换 cron
-sudo crontab -e
-# 添加: 0 3 * * 0  /opt/netbird/cert-renew-cron.sh >> /var/log/netbird-cert-renew.log 2>&1
+sudo systemctl enable netbird
 ```
 
 ### 4. 生产环境 .env 配置
 
 ```bash
-# === 必填 ===
-NETBIRD_DOMAIN=netbird.yourcompany.com       # 公网域名，已有 SSL
-NETBIRD_RDS_DSN=postgres://netbird:${PG_PASSWORD}@${RDS_ENDPOINT}:5432/netbird?sslmode=require
-
-# === 安全（生成方式: openssl rand -base64 32） ===
-TURN_PASSWORD=<random-32-bytes>
-POSTGRES_PASSWORD=<random-32-bytes>
-ZITADEL_MASTERKEY=<random-32-bytes>
-ZITADEL_ADMIN_PASSWORD=<random-16-chars>
-
-# === 网络 ===
-TURN_EXTERNAL_IP=<EC2_EIP>                  # EC2 公网 IP
-
-# === 证书路径（cert-renew-cron.sh 自动维护） ===
-# certs/tls.crt, certs/tls.key
+NETBIRD_DOMAIN=netbird.yourcompany.com
+NETBIRD_VERSION=0.72.1
+ZITADEL_MASTERKEY=<openssl rand -base64 32 | head -c 32>
+ZITADEL_ADMIN_PASSWORD=<含大小写+数字+符号，如 MyP@ssw0rd>
+ZITADEL_EXTERNALPORT=443
+NB_DATASTORE_ENCRYPTION_KEY=<openssl rand -base64 32>
+POSTGRES_PASSWORD=<openssl rand -base64 24>
+TURN_PASSWORD=<openssl rand -base64 32>
+TURN_EXTERNAL_IP=<ECS公网IP>
+NETBIRD_RDS_DSN=postgres://netbird:<PG_PASSWORD>@<RDS_ENDPOINT>:5432/netbird?sslmode=require
 ```
 
 ### 5. 验证
 
 ```bash
 # 容器健康
-sudo systemctl status netbird
-docker compose -f /opt/netbird/docker-compose.yaml \
-  -f /opt/netbird/docker-compose.prod.yaml ps
+docker compose -f docker-compose.yaml -f docker-compose.prod.yaml ps
+# → 所有服务 Up (healthy)
 
-# API 健康
-curl -k https://netbird.yourcompany.com/api/status
-# → {"status":"ok","version":"..."}
-
-# Dashboard 可访问
+# Dashboard
 curl -I https://netbird.yourcompany.com
 
-# 证书信息
-openssl s_client -connect netbird.yourcompany.com:443 -servername netbird.yourcompany.com </dev/null 2>/dev/null \
-  | openssl x509 -noout -subject -dates
-
-# 创建 Setup Key + 车端注册测试
-# 1. Dashboard → Setup Keys → Create Reusable Key
-# 2. 车端: netbird up --management-url https://netbird.yourcompany.com --setup-key <KEY>
-# 3. netbird status 确认 IP 分配 + 点对点连通
+# API（需先登录 Dashboard 获取 token）
+# 创建 Setup Key → 车端注册:
+# netbird up --management-url https://netbird.yourcompany.com --setup-key <KEY>
+# netbird status  # 确认 Connected + IP 分配
 ```
 
-## 容量规划
+## 资源规格
 
-| 规模 | EC2 规格 | RDS 规格 | 预计成本/月 |
-|------|---------|---------|-----------|
-| 测试 (< 50 车) | t3.small | db.t3.micro | ~$50 |
-| 中型 (50-500 车) | t3.medium | db.t3.small | ~$120 |
-| 大型 (500-2000 车) | c5.xlarge | db.t3.medium | ~$300 |
-| 超大规模 (2000+) | c5.2xlarge, 多实例 | db.r5.large + 读写分离 | ~$600+ |
+| 组件 | 规格 | 说明 |
+|------|------|------|
+| EC2 | 4C8G, 50GB GP3 | EIP 绑定，Amazon Linux 2023 / Ubuntu 22.04 |
+| RDS | PostgreSQL 15, db.t3.small, 20GB | 多 AZ 可选 |
+| 安全组 | TCP 80/443/10000, UDP 3478/5349, TCP 22 | |
 
-> NetBird Management 和 Signal 的瓶颈在内存和并发连接数，Coturn 瓶颈在 UDP 转发带宽。
-> 1000 台车 × 遥测 10s 间隔 ≈ 100 msg/s，t3.medium 完全够用。
+4C8G 跑 20 台车绰绰有余。Management + Signal 是轻量 Go 服务，1C 就够。
 
 ## 监控
 

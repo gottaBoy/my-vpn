@@ -1,39 +1,40 @@
 {
-    "DataStoreEncryptionKey": "LXqg45oj5CD/zGjbbuAfDhfNUzWLAU1KxyunAayFmY4=",
+    "_comment": "This is a template. Run auto-init.sh to generate the real management.json.",
+    "DataStoreEncryptionKey": "<generated-by-auto-init>",
     "HttpConfig": {
         "Address": "0.0.0.0:443",
         "CertFile": "/etc/netbird/tls.crt",
         "CertKey": "/etc/netbird/tls.key",
-        "AuthIssuer": "https://netbird.local:8443",
-        "AuthAudience": "376317538281193476",
-        "OIDCConfigEndpoint": "https://netbird.local:8443/.well-known/openid-configuration",
+        "AuthIssuer": "https://<your-domain>",
+        "AuthAudience": "<dashboard-client-id>",
+        "OIDCConfigEndpoint": "https://<your-domain>/.well-known/openid-configuration",
         "IdpSignKeyRefreshEnabled": true
     },
     "IdpManagerConfig": {
         "ManagerType": "zitadel",
         "ClientConfig": {
-            "Issuer": "https://netbird.local:8443",
-            "TokenEndpoint": "https://netbird.local:8443/oauth/v2/token",
-            "ClientID": "netbird-service-account",
-            "ClientSecret": "b536MTq4kRDgiYSPooKdGS1h2k6qxN3jadk23gEC82gv7MmhJJvTlaDSXA2oSMBY",
+            "Issuer": "https://<your-domain>",
+            "TokenEndpoint": "https://<your-domain>/oauth/v2/token",
+            "ClientID": "<sa-client-id>",
+            "ClientSecret": "<sa-client-secret>",
             "GrantType": "client_credentials"
         },
         "ExtraConfig": {
-            "ManagementEndpoint": "https://netbird.local:8443/management/v1"
+            "ManagementEndpoint": "https://<your-domain>/management/v1"
         }
     },
     "DeviceAuthorizationFlow": {
         "Provider": "hosted",
         "ProviderConfig": {
-            "Audience": "376317546770464772",
-            "ClientID": "376317546770464772",
+            "Audience": "<cli-client-id>",
+            "ClientID": "<cli-client-id>",
             "Scope": "openid"
         }
     },
     "PKCEAuthorizationFlow": {
         "ProviderConfig": {
-            "Audience": "376317546770464772",
-            "ClientID": "376317546770464772",
+            "Audience": "<cli-client-id>",
+            "ClientID": "<cli-client-id>",
             "Scope": "openid profile email offline_access",
             "RedirectURLs": [
                 "http://localhost:53000/",
@@ -46,6 +47,6 @@
     },
     "Signal": {
         "Proto": "http",
-        "URI": "netbird.local:10000"
+        "URI": "<your-domain>:10000"
     }
 }

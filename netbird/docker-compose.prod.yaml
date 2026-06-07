@@ -2,125 +2,183 @@
 # Usage:
 #   docker compose -f docker-compose.yaml -f docker-compose.prod.yaml up -d
 #
-# Changes from dev:
-#   - PostgreSQL → external RDS (managed, backup, monitoring)
-#   - Resource limits on all services
-#   - Persistent EBS volumes for data directories
-#   - json-file logging with rotation
-#   - health checks for all services
-#   - Coturn uses host network (required for UDP performance)
+# Changes from base:
+#   - Caddy reverse proxy on 80/443 (TLS termination, only public ports)
+#   - All other service ports removed (internal Docker network only)
+#   - PostgreSQL → external RDS
+#   - Resource limits + health checks on all services
+#   - json-file logging with rotation on all services
+#   - extra_hosts removed (Linux hosts use DNS, not Docker Desktop hacks)
 
 services:
-  # --- Remove local PostgreSQL, use RDS ---
-  postgres:
-    # Production: PostgreSQL is an external RDS instance.
-    # Remove the local container by setting deploy replicas to 0.
-    deploy:
-      replicas: 0
-
-  # --- Zitadel with production config ---
-  zitadel:
-    deploy:
-      resources:
-        limits:
-          cpus: "1"
-          memory: 512M
-        reservations:
-          cpus: "0.25"
-          memory: 256M
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 60s
-
-  # --- Management ---
-  management:
+  # ====================================================================
+  # Caddy — TLS termination, reverse proxy (ONLY public-facing service)
+  # ====================================================================
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs/tls.crt:/etc/caddy/certs/tls.crt:ro
+      - ./certs/tls.key:/etc/caddy/certs/tls.key:ro
     environment:
-      # Override DSNs to point to RDS (set in .env)
-      NB_STORE_ENGINE_POSTGRES_DSN: ${NETBIRD_RDS_DSN}
-      NETBIRD_STORE_CONFIG_DSN: ${NETBIRD_RDS_DSN}
-      # Production: disable debug endpoints
-      NETBIRD_MANAGEMENT_DEBUG: "false"
-      # gRPC TLS for Signal communication
-      NETBIRD_SIGNAL_GRPC_INSECURE: "false"
+      NETBIRD_DOMAIN: ${NETBIRD_DOMAIN}
+    depends_on:
+      management:
+        condition: service_started
+      zitadel:
+        condition: service_started
+      dashboard:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "caddy", "version"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
     deploy:
       resources:
         limits:
-          cpus: "2"
-          memory: 1G
-        reservations:
           cpus: "0.5"
-          memory: 512M
-    healthcheck:
-      test: ["CMD", "curl", "-kf", "https://localhost/api/status"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-    logging:
-      driver: json-file
-      options:
-        max-size: "100m"
-        max-file: "10"
-
-  # --- Signal ---
-  signal:
-    deploy:
-      resources:
-        limits:
-          cpus: "1"
-          memory: 512M
-        reservations:
-          cpus: "0.25"
           memory: 256M
-    healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "10000"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
     logging:
       driver: json-file
       options:
         max-size: "50m"
         max-file: "5"
 
-  # --- Coturn ---
+  # ====================================================================
+  # PostgreSQL — disabled (use RDS)
+  # ====================================================================
+  postgres:
+    deploy:
+      replicas: 0
+
+  # ====================================================================
+  # Zitadel IdP
+  # ====================================================================
+  zitadel:
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ====================================================================
+  # Zitadel Login UI
+  # ====================================================================
+  zitadel-login:
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ====================================================================
+  # NetBird Management
+  # ====================================================================
+  management:
+    ports: []
+    extra_hosts: []
+    environment:
+      NB_STORE_ENGINE_POSTGRES_DSN: ${NETBIRD_RDS_DSN}
+      NETBIRD_STORE_CONFIG_DSN: ${NETBIRD_RDS_DSN}
+      NETBIRD_MANAGEMENT_DEBUG: "false"
+    healthcheck:
+      test: ["CMD", "wget", "--no-check-certificate", "-qO-", "https://localhost/api/status"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1G
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "10"
+
+  # ====================================================================
+  # NetBird Signal
+  # ====================================================================
+  signal:
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "10000"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ====================================================================
+  # Coturn TURN/STUN — requires host network for UDP performance
+  # ====================================================================
   coturn:
     deploy:
       resources:
         limits:
           cpus: "2"
           memory: 512M
-        reservations:
-          cpus: "0.5"
-          memory: 256M
     logging:
       driver: json-file
       options:
         max-size: "100m"
         max-file: "5"
 
-  # --- Dashboard ---
+  # ====================================================================
+  # NetBird Dashboard
+  # ====================================================================
   dashboard:
+    ports: []
     environment:
-      # Production: use HTTPS management URL
       NETBIRD_MGMT_API_ENDPOINT: https://${NETBIRD_DOMAIN}
       NETBIRD_MGMT_GRPC_API_ENDPOINT: https://${NETBIRD_DOMAIN}
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 256M
-        reservations:
-          cpus: "0.1"
-          memory: 128M
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost"]
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
     logging:
       driver: json-file
       options:

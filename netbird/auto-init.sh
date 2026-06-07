@@ -1,12 +1,25 @@
 #!/bin/bash
 # auto-init.sh — Complete Zitadel + NetBird bootstrap
-# Based on init-zitadel.sh, run AFTER Zitadel FirstInstance completes.
+# Run AFTER Zitadel FirstInstance completes.
+# Supports both test (macOS with Caddy) and prod (ECS with Caddy) modes.
+#
+# Usage:
+#   test:  ./auto-init.sh
+#   prod:  NETBIRD_PORT=443 ./auto-init.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DOMAIN="${NETBIRD_DOMAIN:-netbird.local}"
-MGMT_URL="https://${DOMAIN}:8443"
+PORT="${NETBIRD_PORT:-8443}"
+MGMT_URL="https://${DOMAIN}:${PORT}"
 MACHINE_KEY_FILE="${SCRIPT_DIR}/machinekey/zitadel-admin-sa.token"
+DASHBOARD_YAML="${SCRIPT_DIR}/docker-compose.test.yaml"
+
+# Detect overlay file
+COMPOSE_OVERLAY="docker-compose.test.yaml"
+if [ -f "${SCRIPT_DIR}/docker-compose.prod.yaml" ] && [ "$PORT" = "443" ]; then
+    COMPOSE_OVERLAY="docker-compose.prod.yaml"
+fi
 
 # --- Wait for Zitadel ---
 echo "==> Waiting for Zitadel..."
@@ -142,16 +155,21 @@ with open('${SCRIPT_DIR}/management.json','w') as f:
     json.dump(c, f, indent=4); f.write('\n')
 "
 
-# --- 12. Update docker-compose.test.yaml ---
+# --- 12. Update dashboard compose file env vars ---
+echo "==> Updating ${COMPOSE_OVERLAY}..."
 for var in AUTH_CLIENT_ID AUTH_AUDIENCE NEXT_PUBLIC_AUTH_CLIENT_ID NEXT_PUBLIC_AUTH_AUDIENCE; do
-    sed -i '' "s/${var}: '.*'/${var}: '${DASHBOARD_CLIENT_ID}'/" "${SCRIPT_DIR}/docker-compose.test.yaml"
+    if grep -q "${var}:" "${SCRIPT_DIR}/${COMPOSE_OVERLAY}" 2>/dev/null; then
+        sed -i '' "s/${var}: '.*'/${var}: '${DASHBOARD_CLIENT_ID}'/" "${SCRIPT_DIR}/${COMPOSE_OVERLAY}" 2>/dev/null || \
+        sed -i "s/${var}: '.*'/${var}: '${DASHBOARD_CLIENT_ID}'/" "${SCRIPT_DIR}/${COMPOSE_OVERLAY}"
+    fi
 done
+echo "  OK"
 
 # --- 13. Restart services ---
 echo "==> Restarting..."
 cd "$SCRIPT_DIR"
-docker compose -f docker-compose.yaml -f docker-compose.test.yaml up -d --force-recreate management dashboard 2>&1 | tail -2
-docker compose -f docker-compose.yaml -f docker-compose.test.yaml restart caddy zitadel-login 2>&1 | tail -1
+docker compose -f docker-compose.yaml -f "${COMPOSE_OVERLAY}" up -d --force-recreate management dashboard 2>&1 | tail -2
+docker compose -f docker-compose.yaml -f "${COMPOSE_OVERLAY}" restart caddy zitadel-login 2>&1 | tail -1
 
 echo ""
 echo "============================================"

@@ -1,4 +1,4 @@
-netbird.local {
+{$NETBIRD_DOMAIN:netbird.local} {
     tls /etc/caddy/certs/tls.crt /etc/caddy/certs/tls.key
 
     # --- Zitadel Login UI (v4, separate container port 3000) ---

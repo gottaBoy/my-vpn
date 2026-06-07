@@ -39,7 +39,7 @@ services:
       - ./login-client.pat:/login-client.pat
     environment:
       ZITADEL_EXTERNALDOMAIN: ${NETBIRD_DOMAIN}
-      ZITADEL_EXTERNALPORT: 8443
+      ZITADEL_EXTERNALPORT: ${ZITADEL_EXTERNALPORT:-8443}
       ZITADEL_EXTERNALSECURE: "true"
       ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD: ${ZITADEL_ADMIN_PASSWORD:-NetBirdAdmin123}
       POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
@@ -85,7 +85,7 @@ services:
       NETBIRD_MANAGEMENT_DOMAIN: ${NETBIRD_DOMAIN}
       NETBIRD_SIGNAL_PORT: "10000"
       NETBIRD_SIGNAL_ADDR: ${NETBIRD_DOMAIN}:10000
-      NB_DATASTORE_ENCRYPTION_KEY: "LXqg45oj5CD/zGjbbuAfDhfNUzWLAU1KxyunAayFmY4="
+      NB_DATASTORE_ENCRYPTION_KEY: ${NB_DATASTORE_ENCRYPTION_KEY:-LXqg45oj5CD/zGjbbuAfDhfNUzWLAU1KxyunAayFmY4=}
       NB_STORE_ENGINE_POSTGRES_DSN: postgres://netbird:${POSTGRES_PASSWORD:-netbird}@postgres:5432/netbird?sslmode=disable
       NETBIRD_STORE_CONFIG_DSN: postgres://netbird:${POSTGRES_PASSWORD:-netbird}@postgres:5432/netbird?sslmode=disable
       NETBIRD_MANAGEMENT_TURN_PASSWORD: ${TURN_PASSWORD}
@@ -129,6 +129,8 @@ services:
     restart: unless-stopped
     volumes:
       - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
+      - ./certs/tls.crt:/etc/coturn/certs/tls.crt:ro
+      - ./certs/tls.key:/etc/coturn/certs/tls.key:ro
     ports:
       - "3478:3478/udp"
       - "3478:3478/tcp"
