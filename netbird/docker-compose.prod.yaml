@@ -15,7 +15,7 @@ services:
   # Caddy — TLS termination, reverse proxy (ONLY public-facing service)
   # ====================================================================
   caddy:
-    image: caddy:2-alpine
+    image: ${MY_CADDY_IMAGE:-caddy:2-alpine}
     restart: unless-stopped
     ports:
       - "80:80"

@@ -13,6 +13,7 @@ docker pull netbirdio/management:0.72.1
 docker pull netbirdio/signal:0.72.1
 docker pull coturn/coturn:4.6-alpine
 docker pull netbirdio/dashboard:latest
+docker pull caddy:2-alpine
 
 # === 2. Tag ===
 docker tag postgres:16-alpine                    ${HARBOR_REGISTRY}/library/postgres:16-alpine
@@ -22,6 +23,7 @@ docker tag netbirdio/management:0.72.1             ${HARBOR_REGISTRY}/library/ma
 docker tag netbirdio/signal:0.72.1                 ${HARBOR_REGISTRY}/library/signal:0.72.1
 docker tag coturn/coturn:4.6-alpine                ${HARBOR_REGISTRY}/library/coturn:4.6-alpine
 docker tag netbirdio/dashboard:latest              ${HARBOR_REGISTRY}/library/dashboard:latest
+docker tag caddy:2-alpine                          ${HARBOR_REGISTRY}/library/caddy:2-alpine
 
 # === 3. Push ===
 docker push ${HARBOR_REGISTRY}/library/postgres:16-alpine
@@ -31,5 +33,6 @@ docker push ${HARBOR_REGISTRY}/library/management:0.72.1
 docker push ${HARBOR_REGISTRY}/library/signal:0.72.1
 docker push ${HARBOR_REGISTRY}/library/coturn:4.6-alpine
 docker push ${HARBOR_REGISTRY}/library/dashboard:latest
+docker push ${HARBOR_REGISTRY}/library/caddy:2-alpine
 
 echo "=== 完成！记得更新 .env 中的 MY_*_IMAGE ==="

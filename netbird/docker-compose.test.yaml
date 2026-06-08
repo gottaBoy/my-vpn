@@ -1,6 +1,6 @@
 services:
   caddy:
-    image: caddy:2-alpine
+    image: ${MY_CADDY_IMAGE:-caddy:2-alpine}
     restart: unless-stopped
     ports:
     - 8443:443
