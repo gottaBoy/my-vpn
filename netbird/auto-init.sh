@@ -22,14 +22,18 @@ if [ -f "${SCRIPT_DIR}/docker-compose.prod.yaml" ] && [ "$PORT" = "443" ]; then
 fi
 
 # --- Wait for Zitadel ---
-echo "==> Waiting for Zitadel..."
+echo "==> Waiting for Zitadel (checking every 5s, up to 200s)..."
 for i in $(seq 1 40); do
+    echo -n "  [$i/40] "
     if [ -f "$MACHINE_KEY_FILE" ] && [ -s "$MACHINE_KEY_FILE" ]; then
         MACHINE_KEY=$(cat "$MACHINE_KEY_FILE")
         CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 \
             -H "Authorization: Bearer ${MACHINE_KEY}" \
             "${MGMT_URL}/management/v1/projects/_search" -d '{}' 2>/dev/null || echo "000")
-        [ "$CODE" = "200" ] && { echo "  [OK] Zitadel ready (attempt $i)"; break; }
+        [ "$CODE" = "200" ] && { echo " [OK] ready"; break; }
+        echo "API returned $CODE, retrying..."
+    else
+        echo "waiting for machine key token..."
     fi
     [ "$i" = "40" ] && { echo "  [FAIL] Timeout"; exit 1; }
     sleep 5
