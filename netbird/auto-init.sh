@@ -43,16 +43,37 @@ API="curl -sk --max-time 10 -H 'Authorization: Bearer ${MACHINE_KEY}' -H 'Conten
 
 # --- 1. Find or Create Project ---
 echo "==> Looking up NetBird project..."
-PROJECT_ID=$(eval "$API ${MGMT_URL}/management/v1/projects/_search" -d '{"query":{"offset":0,"limit":10,"asc":false},"queries":[{"nameQuery":{"name":"NETBIRD","method":"TEXT_QUERY_METHOD_EQUALS"}}]}' \
-    | python3 -c "import sys,json; r=json.load(sys.stdin); print(r['result'][0]['id'] if r.get('result') else '')" 2>/dev/null || echo "")
-if [ -n "$PROJECT_ID" ]; then
-    echo "  Found existing: $PROJECT_ID"
-else
+# List all projects and find NETBIRD
+PROJECT_ID=$(eval "$API ${MGMT_URL}/management/v1/projects/_search" -d '{"query":{"offset":0,"limit":100,"asc":true}}' \
+    | python3 -c "
+import sys,json
+r=json.load(sys.stdin)
+for p in r.get('result',[]):
+    if p.get('name','')=='NETBIRD':
+        print(p['id'])
+        break
+" 2>/dev/null || echo "")
+
+if [ -z "$PROJECT_ID" ]; then
     echo "==> Creating NetBird project..."
     PROJECT_ID=$(eval "$API ${MGMT_URL}/management/v1/projects" -d '{"name":"NETBIRD"}' \
-        | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
-    echo "  Project: $PROJECT_ID"
+        | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+if 'id' in d:
+    print(d['id'])
+else:
+    # already exists — list and find
+    import subprocess,os
+    print('')
+" 2>/dev/null || echo "")
+    if [ -z "$PROJECT_ID" ]; then
+        echo "  Project already exists, finding by list..."
+        PROJECT_ID=$(eval "$API ${MGMT_URL}/management/v1/projects/_search" -d '{"query":{"offset":0,"limit":100}}' \
+            | python3 -c "import sys,json;r=json.load(sys.stdin);print(next((p['id'] for p in r['result'] if p['name']=='NETBIRD'),''))")
+    fi
 fi
+echo "  Project: $PROJECT_ID"
 
 # --- 2. Create Dashboard OIDC App (WEB type) ---
 echo "==> Creating Dashboard OIDC App (WEB)..."
