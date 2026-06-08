@@ -78,6 +78,7 @@ my-vpn/
     ├── turnserver.conf              # Coturn TURN/STUN 配置
     ├── cert-export.sh               # 从 K8s Secret 导出 TLS 证书
     ├── cert-renew-cron.sh           # 证书自动轮换（cron）
+    ├── init-dirs.sh                 # 初始化目录/文件权限（git clone 后首次运行）
     ├── netbird.service              # systemd 单元（生产用）
     ├── .env.example                 # 环境变量模板
     └── certs/                       # TLS 证书（gitignored）
@@ -124,30 +125,77 @@ TURN_PASSWORD=$(openssl rand -base64 32)
 cat > netbird/.env << EOF
 NETBIRD_DOMAIN=netbird.yourcompany.com
 NETBIRD_VERSION=0.72.1
+HARBOR_REGISTRY=harbor.intra.zeron.ai
 ZITADEL_MASTERKEY=${ZITADEL_MASTERKEY}
 ZITADEL_ADMIN_PASSWORD=${ZITADEL_ADMIN_PASSWORD}
 ZITADEL_EXTERNALPORT=443
 NB_DATASTORE_ENCRYPTION_KEY=${NB_DATASTORE_ENCRYPTION_KEY}
+POSTGRES_HOST=<RDS_ENDPOINT>
+POSTGRES_USER=zeroniot
 POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 TURN_PASSWORD=${TURN_PASSWORD}
 TURN_EXTERNAL_IP=<ECS公网IP>
-NETBIRD_RDS_DSN=postgres://netbird:${POSTGRES_PASSWORD}@<RDS_ENDPOINT>:5432/netbird?sslmode=require
+NETBIRD_RDS_DSN=postgres://zeroniot:${POSTGRES_PASSWORD}@<RDS_ENDPOINT>:5432/netbird?sslmode=require
 EOF
 chmod 600 netbird/.env
 
-# === 3. 放置 TLS 证书到 netbird/certs/ ===
+# 手动编辑 .env，找 NETBIRD_RDS_DSN 那行
+# 把密码中的特殊字符替换为 URL 编码：
+#   # → %23
+#   @ → %40
+#   : → %3A
+#   / → %2F
+#   ? → %3F
+#   % → %25
+# sed -i 's/sslmode=require/sslmode=disable/' docker-compose.prod.yaml
 
-# === 4. 一键启动 ===
+# === 3. RDS 创建数据库（外部 PostgreSQL） ===
+psql -h <RDS_HOST> -U zeroniot -d postgres <<SQL
+CREATE DATABASE zitadel OWNER zeroniot;
+CREATE DATABASE netbird OWNER zeroniot;
+SQL
+
+# === 4. 初始化目录权限 + 放置 TLS 证书 ===
 cd netbird
+./init-dirs.sh
+# 将 TLS 证书放入 certs/tls.crt 和 certs/tls.key
+
+# === 5. 一键启动 ===
 docker compose -f docker-compose.yaml -f docker-compose.prod.yaml up -d
 
-docker compose -f docker-compose.yaml -f docker-compose.prod.yaml down
+# === 6. 等 Zitadel 初始化后自动配置 ===
+echo "127.0.0.1 netbird.yourcompany.com" >> /etc/hosts
+NETBIRD_DOMAIN=netbird.yourcompany.com NETBIRD_PORT=443 ./auto-init.sh
 
-# === 5. 等 Zitadel 初始化后自动配置 ===
-NETBIRD_PORT=443 ./auto-init.sh
-
-# === 6. 访问 Dashboard ===
+# === 7. 访问 Dashboard ===
 open https://netbird.yourcompany.com
+```
+
+### 生产启动 
+```shell
+# 1. 克隆代码
+git clone ... && cd my-vpn/netbird
+
+# 2. 创建 .env
+cp .env.example .env  # 填入真实值
+
+# 3. 初始化（一口气搞定所有目录/文件/权限问题）
+./init-dirs.sh
+
+# 4. RDS 建库
+psql -h <RDS_HOST> -U zeroniot -d postgres -c "CREATE DATABASE zitadel_v2 OWNER zeroniot;"
+psql -h <RDS_HOST> -U zeroniot -d postgres -c "CREATE DATABASE netbird OWNER zeroniot;"
+
+# 5. 放证书
+cp /path/to/fullchain.pem certs/tls.crt
+cp /path/to/privkey.pem   certs/tls.key
+chmod 600 certs/tls.key
+
+# 6. 启动
+docker compose -f docker-compose.yaml -f docker-compose.prod.yaml up -d
+
+# 7. OIDC 配置
+NETBIRD_PORT=443 ./auto-init.sh
 ```
 
 详细步骤见 [docs/production.md](docs/production.md)。

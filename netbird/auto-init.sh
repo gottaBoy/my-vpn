@@ -138,6 +138,18 @@ c['HttpConfig']['AuthIssuer'] = '$MGMT_URL'
 c['HttpConfig']['OIDCConfigEndpoint'] = '$MGMT_URL/.well-known/openid-configuration'
 c['HttpConfig']['IdpSignKeyRefreshEnabled'] = True
 
+# Preserve DataStoreEncryptionKey from env or existing config
+import os
+env_key = os.environ.get('NB_DATASTORE_ENCRYPTION_KEY', '')
+if env_key:
+    c['DataStoreEncryptionKey'] = env_key
+
+# Signal URI from NETBIRD_DOMAIN
+domain = os.environ.get('NETBIRD_DOMAIN', '${DOMAIN}')
+if 'Signal' in c and domain:
+    c['Signal']['Proto'] = 'http'
+    c['Signal']['URI'] = domain + ':10000'
+
 c['IdpManagerConfig']['ManagerType'] = 'zitadel'
 c['IdpManagerConfig']['ClientConfig']['Issuer'] = '$MGMT_URL'
 c['IdpManagerConfig']['ClientConfig']['TokenEndpoint'] = '$MGMT_URL/oauth/v2/token'
