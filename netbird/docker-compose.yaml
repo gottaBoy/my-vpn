@@ -13,7 +13,7 @@
 services:
   # --- PostgreSQL (shared by Management + Zitadel) ---
   postgres:
-    image: postgres:16-alpine
+    image: ${MY_POSTGRES_IMAGE:-postgres:16-alpine}
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-netbird}
@@ -30,7 +30,7 @@ services:
 
   # --- Zitadel IdP (built-in OIDC provider) ---
   zitadel:
-    image: ghcr.io/zitadel/zitadel:latest
+    image: ${MY_ZITADEL_IMAGE:-ghcr.io/zitadel/zitadel:latest}
     restart: unless-stopped
     command: start-from-init --masterkey ${ZITADEL_MASTERKEY:-MasterkeyForDevOnly} --tlsMode external --config /zitadel-config.yaml
     volumes:
@@ -59,7 +59,7 @@ services:
 
   # --- Zitadel Login UI (v4 separate container, port 3000) ---
   zitadel-login:
-    image: ghcr.io/zitadel/zitadel-login:latest
+    image: ${MY_ZITADEL_LOGIN_IMAGE:-ghcr.io/zitadel/zitadel-login:latest}
     restart: unless-stopped
     environment:
       ZITADEL_API_URL: http://zitadel:8080
@@ -74,7 +74,7 @@ services:
 
   # --- NetBird Management ---
   management:
-    image: netbirdio/management:${NETBIRD_VERSION:-latest}
+    image: ${MY_MANAGEMENT_IMAGE:-netbirdio/management:latest}
     restart: unless-stopped
     volumes:
       - netbird-mgmt-data:/var/lib/netbird
@@ -112,7 +112,7 @@ services:
 
   # --- NetBird Signal (WireGuard coordination) ---
   signal:
-    image: netbirdio/signal:${NETBIRD_VERSION:-latest}
+    image: ${MY_SIGNAL_IMAGE:-netbirdio/signal:latest}
     restart: unless-stopped
     volumes:
       - ./certs/tls.crt:/etc/netbird/tls.crt:ro
@@ -125,7 +125,7 @@ services:
 
   # --- Coturn (TURN/STUN relay) ---
   coturn:
-    image: coturn/coturn:4.6-alpine
+    image: ${MY_COTURN_IMAGE:-coturn/coturn:4.6-alpine}
     restart: unless-stopped
     volumes:
       - ./turnserver.conf:/etc/coturn/turnserver.conf:ro
@@ -140,7 +140,7 @@ services:
 
   # --- NetBird Dashboard ---
   dashboard:
-    image: netbirdio/dashboard:latest
+    image: ${MY_DASHBOARD_IMAGE:-netbirdio/dashboard:latest}
     restart: unless-stopped
     environment:
       NETBIRD_MGMT_API_ENDPOINT: https://${NETBIRD_DOMAIN}
