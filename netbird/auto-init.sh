@@ -41,11 +41,18 @@ done
 
 API="curl -sk --max-time 10 -H 'Authorization: Bearer ${MACHINE_KEY}' -H 'Content-Type: application/json'"
 
-# --- 1. Create Project ---
-echo "==> Creating NetBird project..."
-PROJECT_ID=$(eval "$API ${MGMT_URL}/management/v1/projects -d '{\"name\":\"NETBIRD\"}'" \
-    | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
-echo "  Project: $PROJECT_ID"
+# --- 1. Find or Create Project ---
+echo "==> Looking up NetBird project..."
+PROJECT_ID=$(eval "$API ${MGMT_URL}/management/v1/projects/_search" -d '{"query":{"offset":0,"limit":10,"asc":false},"queries":[{"nameQuery":{"name":"NETBIRD","method":"TEXT_QUERY_METHOD_EQUALS"}}]}' \
+    | python3 -c "import sys,json; r=json.load(sys.stdin); print(r['result'][0]['id'] if r.get('result') else '')" 2>/dev/null || echo "")
+if [ -n "$PROJECT_ID" ]; then
+    echo "  Found existing: $PROJECT_ID"
+else
+    echo "==> Creating NetBird project..."
+    PROJECT_ID=$(eval "$API ${MGMT_URL}/management/v1/projects" -d '{"name":"NETBIRD"}' \
+        | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+    echo "  Project: $PROJECT_ID"
+fi
 
 # --- 2. Create Dashboard OIDC App (WEB type) ---
 echo "==> Creating Dashboard OIDC App (WEB)..."
