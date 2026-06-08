@@ -103,7 +103,8 @@ services:
   # ====================================================================
   management:
     ports: []
-    extra_hosts: []
+    extra_hosts:
+      - "${NETBIRD_DOMAIN}:host-gateway"
     environment:
       NB_STORE_ENGINE_POSTGRES_DSN: ${NETBIRD_RDS_DSN}
       NETBIRD_STORE_CONFIG_DSN: ${NETBIRD_RDS_DSN}
