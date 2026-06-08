@@ -141,6 +141,8 @@ chmod 600 netbird/.env
 cd netbird
 docker compose -f docker-compose.yaml -f docker-compose.prod.yaml up -d
 
+docker compose -f docker-compose.yaml -f docker-compose.prod.yaml down
+
 # === 5. 等 Zitadel 初始化后自动配置 ===
 NETBIRD_PORT=443 ./auto-init.sh
 
