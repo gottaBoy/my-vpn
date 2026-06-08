@@ -15,15 +15,15 @@ FirstInstance:
 
 Database:
   postgres:
-    Host: postgres
+    Host: ${POSTGRES_HOST}
     Port: 5432
     Database: zitadel
     User:
-      Username: netbird
-      Password: netbird
+      Username: ${POSTGRES_USER}
+      Password: ${POSTGRES_PASSWORD}
     Admin:
-      Username: netbird
-      Password: netbird
+      Username: ${POSTGRES_USER}
+      Password: ${POSTGRES_PASSWORD}
 
 Projections:
   Customizations:
