@@ -169,6 +169,18 @@ services:
     environment:
       NETBIRD_MGMT_API_ENDPOINT: https://${NETBIRD_DOMAIN}
       NETBIRD_MGMT_GRPC_API_ENDPOINT: https://${NETBIRD_DOMAIN}
+      AUTH_AUTHORITY: https://${NETBIRD_DOMAIN}
+      AUTH_CLIENT_ID: ${DASHBOARD_CLIENT_ID}
+      AUTH_AUDIENCE: ${DASHBOARD_CLIENT_ID}
+      NEXT_PUBLIC_AUTH_AUTHORITY: https://${NETBIRD_DOMAIN}
+      NEXT_PUBLIC_AUTH_CLIENT_ID: ${DASHBOARD_CLIENT_ID}
+      NEXT_PUBLIC_AUTH_AUDIENCE: ${DASHBOARD_CLIENT_ID}
+      AUTH_SUPPORTED_SCOPES: openid profile email offline_access
+      AUTH_REDIRECT_URI: /nb-auth
+      AUTH_SILENT_REDIRECT_URI: /nb-silent-auth
+      AUTH_BASE_URL: https://${NETBIRD_DOMAIN}
+      AUTH_POST_LOGOUT_REDIRECT_URI: /
+      USE_AUTH0: "false"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost"]
       interval: 30s
