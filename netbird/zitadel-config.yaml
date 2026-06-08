@@ -15,15 +15,7 @@ FirstInstance:
 
 Database:
   postgres:
-    Host: ${POSTGRES_HOST}
-    Port: 5432
-    Database: zitadel
-    User:
-      Username: ${POSTGRES_USER}
-      Password: ${POSTGRES_PASSWORD}
-    Admin:
-      Username: ${POSTGRES_USER}
-      Password: ${POSTGRES_PASSWORD}
+    # Host / Port / User / Password / Database are set via ZITADEL_DATABASE_POSTGRES_* env vars in docker-compose.yaml
 
 Projections:
   Customizations:
