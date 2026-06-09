@@ -12,6 +12,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DOMAIN="${NETBIRD_DOMAIN:-netbird.local}"
 PORT="${NETBIRD_PORT:-8443}"
 MGMT_URL="https://${DOMAIN}:${PORT}"
+# Strip :443 (standard HTTPS port is implicit, Zitadel issuer omits it)
+MGMT_URL_NO_PORT="${MGMT_URL%:443}"
 MACHINE_KEY_FILE="${SCRIPT_DIR}/machinekey/zitadel-admin-sa.token"
 DASHBOARD_YAML="${SCRIPT_DIR}/docker-compose.test.yaml"
 
@@ -162,8 +164,8 @@ with open('${SCRIPT_DIR}/management.json') as f:
     c = json.load(f)
 
 c['HttpConfig']['AuthAudience'] = '$DASHBOARD_CLIENT_ID'
-c['HttpConfig']['AuthIssuer'] = '$MGMT_URL'
-c['HttpConfig']['OIDCConfigEndpoint'] = '$MGMT_URL/.well-known/openid-configuration'
+c['HttpConfig']['AuthIssuer'] = '$MGMT_URL_NO_PORT'
+c['HttpConfig']['OIDCConfigEndpoint'] = '$MGMT_URL_NO_PORT/.well-known/openid-configuration'
 c['HttpConfig']['IdpSignKeyRefreshEnabled'] = True
 
 # Preserve DataStoreEncryptionKey from env or existing config
@@ -179,12 +181,12 @@ if 'Signal' in c and domain:
     c['Signal']['URI'] = domain + ':10000'
 
 c['IdpManagerConfig']['ManagerType'] = 'zitadel'
-c['IdpManagerConfig']['ClientConfig']['Issuer'] = '$MGMT_URL'
-c['IdpManagerConfig']['ClientConfig']['TokenEndpoint'] = '$MGMT_URL/oauth/v2/token'
+c['IdpManagerConfig']['ClientConfig']['Issuer'] = '$MGMT_URL_NO_PORT'
+c['IdpManagerConfig']['ClientConfig']['TokenEndpoint'] = '$MGMT_URL_NO_PORT/oauth/v2/token'
 c['IdpManagerConfig']['ClientConfig']['ClientID'] = '$SA_CLIENT_ID'
 c['IdpManagerConfig']['ClientConfig']['ClientSecret'] = '$SA_CLIENT_SECRET'
 c['IdpManagerConfig']['ClientConfig']['GrantType'] = 'client_credentials'
-c['IdpManagerConfig']['ExtraConfig'] = {'ManagementEndpoint': '$MGMT_URL/management/v1'}
+c['IdpManagerConfig']['ExtraConfig'] = {'ManagementEndpoint': '$MGMT_URL_NO_PORT/management/v1'}
 
 c['DeviceAuthorizationFlow']['Provider'] = 'hosted'
 c['DeviceAuthorizationFlow']['ProviderConfig']['Audience'] = '$CLI_CLIENT_ID'
